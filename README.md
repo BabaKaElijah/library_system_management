@@ -197,32 +197,30 @@ issued_status as ist
 JOIN
 books as b
 ON b.isbn = ist.issued_book_isbn
-GROUP BY 1
+GROUP BY category
 ```
 
 9. **List Members Who Registered in the Last 180 Days**:
 ```sql
-SELECT * FROM members
-WHERE reg_date >= CURRENT_DATE - INTERVAL '180 days';
+SELECT *
+FROM members
+WHERE DATEDIFF(DAY, reg_date, GETDATE()) <= 180
 ```
 
 10. **List Employees with Their Branch Manager's Name and their branch details**:
 
 ```sql
-SELECT 
-    e1.emp_id,
-    e1.emp_name,
-    e1.position,
-    e1.salary,
-    b.*,
-    e2.emp_name as manager
-FROM employees as e1
-JOIN 
-branch as b
-ON e1.branch_id = b.branch_id    
-JOIN
-employees as e2
-ON e2.emp_id = b.manager_id
+SELECT  
+	e1.emp_id,
+	e1.emp_name,
+	e1.position,
+	e1.salary,
+	e2.emp_name as manager
+FROM employees AS e1
+JOIN branch AS b1
+ON b1.branch_id = e1.branch_id
+JOIN employees AS e2
+ON b1.manager_id = e2.emp_id
 ```
 
 Task 11. **Create a Table of Books with Rental Price Above a Certain Threshold**:
@@ -248,27 +246,21 @@ Write a query to identify members who have overdue books (assume a 30-day return
 
 ```sql
 SELECT 
-    ist.issued_member_id,
-    m.member_name,
-    bk.book_title,
-    ist.issued_date,
-    -- rs.return_date,
-    CURRENT_DATE - ist.issued_date as over_dues_days
-FROM issued_status as ist
-JOIN 
-members as m
-    ON m.member_id = ist.issued_member_id
-JOIN 
-books as bk
+	ist.issued_member_id,
+	m.member_name,
+	bk.book_title,
+	ist.issued_date,
+	rs.return_date,
+    DATEDIFF(DAY, ist.issued_date, GETDATE()) AS overdue_days
+FROM members as m
+JOIN issued_status AS ist
+ON ist.issued_member_id = m.member_id
+JOIN books as bk
 ON bk.isbn = ist.issued_book_isbn
-LEFT JOIN 
-return_status as rs
+LEFT JOIN return_status AS rs
 ON rs.issued_id = ist.issued_id
-WHERE 
-    rs.return_date IS NULL
-    AND
-    (CURRENT_DATE - ist.issued_date) > 30
-ORDER BY 1
+WHERE rs.return_date is NULL
+AND  DATEDIFF(DAY, ist.issued_date, GETDATE()) > 30;
 ```
 
 
@@ -278,64 +270,44 @@ Write a query to update the status of books in the books table to "Yes" when the
 
 ```sql
 
-CREATE OR REPLACE PROCEDURE add_return_records(p_return_id VARCHAR(10), p_issued_id VARCHAR(10), p_book_quality VARCHAR(10))
-LANGUAGE plpgsql
-AS $$
+SELECT * FROM issued_status
+SELECT * FROM return_status
 
-DECLARE
-    v_isbn VARCHAR(50);
-    v_book_name VARCHAR(80);
-    
+--Stored Procedure
+
+ALTER PROCEDURE updateBookStatus
+@IssuedId nvarchar(40)
+AS
 BEGIN
-    -- all your logic and code
-    -- inserting into returns based on users input
-    INSERT INTO return_status(return_id, issued_id, return_date, book_quality)
-    VALUES
-    (p_return_id, p_issued_id, CURRENT_DATE, p_book_quality);
+	-- Declare a variable to hold the ISBN of the returned book
+	DECLARE @ReturnedISBN nvarchar(50);
+	DECLARE @BookTitle nvarchar(100);
 
-    SELECT 
-        issued_book_isbn,
-        issued_book_name
-        INTO
-        v_isbn,
-        v_book_name
-    FROM issued_status
-    WHERE issued_id = p_issued_id;
+	-- Get the ISBN from issued_status based on the issued_id
+	SELECT @ReturnedISBN = issued_book_isbn
+	FROM issued_status
+	WHERE issued_id = @IssuedId;
 
-    UPDATE books
-    SET status = 'yes'
-    WHERE isbn = v_isbn;
+	--Get the book title using ISBN
+	SELECT @BookTitle = book_title
+	FROM books
+	WHERE isbn = @ReturnedISBN
 
-    RAISE NOTICE 'Thank you for returning the book: %', v_book_name;
-    
-END;
-$$
+	+-- Now update the status of the book to 'available'
+	UPDATE books
+	SET status = 'available'
+	WHERE isbn = @ReturnedISBN;
 
+	PRINT 'Thank you for returning the book "' + @BookTitle + '".';
+END
 
--- Testing FUNCTION add_return_records
-
-issued_id = IS135
-ISBN = WHERE isbn = '978-0-307-58837-1'
+--Testing Function
+EXEC UpdateBookStatus @IssuedID = 'IS136';
 
 SELECT * FROM books
-WHERE isbn = '978-0-307-58837-1';
-
-SELECT * FROM issued_status
-WHERE issued_book_isbn = '978-0-307-58837-1';
-
-SELECT * FROM return_status
-WHERE issued_id = 'IS135';
-
--- calling function 
-CALL add_return_records('RS138', 'IS135', 'Good');
-
--- calling function 
-CALL add_return_records('RS148', 'IS140', 'Good');
+WHERE isbn = '978-0-7432-7357-1';
 
 ```
-
-
-
 
 **Task 15: Branch Performance Report**  
 Create a query that generates a performance report for each branch, showing the number of books issued, the number of books returned, and the total revenue generated from book rentals.
@@ -372,16 +344,15 @@ SELECT *
 INTO active_members
 FROM members
 WHERE member_id	IN (SELECT
-                                    DISTINCT issued_member_id
-                                    FROM issued_status		
-		            WHERE
+			DISTINCT issued_member_id
+			FROM issued_status		
+			WHERE
 			issued_date >= DATEADD(MONTH, -2, GETDATE())
-                           );
+			);
 
 SELECT * FROM active_members			
 
 ```
-
 
 **Task 17: Find Employees with the Most Book Issues Processed**  
 Write a query to find the top 3 employees who have processed the most book issues. Display the employee name, number of books processed, and their branch.
